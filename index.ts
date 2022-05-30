@@ -1,5 +1,5 @@
 import { parse, ParserOptions } from '@babel/parser'
-import type { OnLoadArgs, OnLoadResult, Plugin, PluginBuild } from 'esbuild'
+import type { OnLoadArgs, OnLoadResult, Plugin, PluginBuild, Loader } from 'esbuild'
 import * as fs from 'fs'
 import * as path from 'path'
 import WindiCss from 'windicss'
@@ -44,7 +44,7 @@ const plugin: EsbuildPluginWindiCss = ({ filter, babelParserOptions, windiCssCon
   let windiCss = new WindiCss(windiCssConfig)
   let firstFilePath: string | undefined
   const cssFileContentsMap = new Map<string, string>()
-  const transform = ({ args, contents }: EsbuildPipeableTransformArgs) => {
+  const transform = ({ args, contents }: EsbuildPipeableTransformArgs, build: PluginBuild): OnLoadResult => {
     // recreate WindiCss instance for each build
     if (firstFilePath === undefined) {
       firstFilePath = args.path
@@ -66,17 +66,19 @@ const plugin: EsbuildPluginWindiCss = ({ filter, babelParserOptions, windiCssCon
       cssFileContentsMap.set(cssFilename, styleSheet.combine().sort().build(true))
       contents = `import '${cssFilename}'\n${contents}`
     }
-    return { contents, loader: path.extname(args.path).slice(1) as 'js' | 'jsx' | 'ts' | 'tsx' }
+    const ext = path.extname(args.path)
+    const loader = build.initialOptions.loader?.[ext] || ext.slice(1)
+    return { contents, loader: loader as Loader }
   }
   return {
     name: pluginName,
     setup: ((build: PluginBuild, pipe?: { transform: EsbuildPipeableTransformArgs }) => {
       if (pipe?.transform) {
-        return transform(pipe.transform)
+        return transform(pipe.transform, build)
       }
       build.onLoad({ filter: filter ?? /\.[jt]sx?$/ }, async args => {
         try {
-          return transform({ args, contents: await fs.promises.readFile(args.path, 'utf8') })
+          return transform({ args, contents: await fs.promises.readFile(args.path, 'utf8') }, build)
         } catch (error) {
           return { errors: [{ text: error.message }] }
         }

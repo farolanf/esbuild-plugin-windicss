@@ -42,7 +42,7 @@ const plugin = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
     let windiCss = new windicss_1.default(windiCssConfig);
     let firstFilePath;
     const cssFileContentsMap = new Map();
-    const transform = ({ args, contents }) => {
+    const transform = ({ args, contents }, build) => {
         // recreate WindiCss instance for each build
         if (firstFilePath === undefined) {
             firstFilePath = args.path;
@@ -64,17 +64,19 @@ const plugin = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
             cssFileContentsMap.set(cssFilename, styleSheet.combine().sort().build(true));
             contents = `import '${cssFilename}'\n${contents}`;
         }
-        return { contents, loader: path.extname(args.path).slice(1) };
+        const ext = path.extname(args.path);
+        const loader = build.initialOptions.loader?.[ext] || ext.slice(1);
+        return { contents, loader: loader };
     };
     return {
         name: pluginName,
         setup: ((build, pipe) => {
             if (pipe?.transform) {
-                return transform(pipe.transform);
+                return transform(pipe.transform, build);
             }
             build.onLoad({ filter: filter ?? /\.[jt]sx?$/ }, async (args) => {
                 try {
-                    return transform({ args, contents: await fs.promises.readFile(args.path, 'utf8') });
+                    return transform({ args, contents: await fs.promises.readFile(args.path, 'utf8') }, build);
                 }
                 catch (error) {
                     return { errors: [{ text: error.message }] };
