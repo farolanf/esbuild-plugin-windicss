@@ -80,7 +80,7 @@ const plugin: EsbuildPluginWindiCss = ({ filter, babelParserOptions, windiCssCon
         try {
           return transform({ args, contents: await fs.promises.readFile(args.path, 'utf8') }, build)
         } catch (error) {
-          return { errors: [{ text: error.message }] }
+          return { errors: [{ text: (error as Error).message }] }
         }
       })
       build.onResolve({ filter: RegExp(String.raw`\.${pluginName}\.css`) }, ({ path }) => ({ path, namespace: pluginName }))
