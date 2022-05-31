@@ -17,6 +17,7 @@ interface EsbuildPipeablePlugin extends Plugin {
 
 interface EsbuildPluginWindiCssOptions {
   readonly filter?: RegExp
+  readonly pathBase?: string
   readonly babelParserOptions?: ParserOptions
   readonly windiCssConfig?: ConstructorParameters<typeof WindiCss>[0]
 }
@@ -30,7 +31,7 @@ const pluginName = 'esbuild-plugin-windicss'
 
 const ignoredClassPattern = RegExp(`\\b(${Object.getOwnPropertyNames(Object.prototype).join('|')})\\b`, 'g')
 
-const plugin: EsbuildPluginWindiCss = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
+const plugin: EsbuildPluginWindiCss = ({ filter, pathBase, babelParserOptions, windiCssConfig } = {}) => {
   const resolvedBabelParserOptions: ParserOptions = babelParserOptions ? { ...babelParserOptions, tokens: true } : {
     errorRecovery: true,
     allowAwaitOutsideFunction: true,
@@ -62,7 +63,7 @@ const plugin: EsbuildPluginWindiCss = ({ filter, babelParserOptions, windiCssCon
       }
     }
     if (styleSheet.children.length !== 0) {
-      const cssFilename = `${args.path}.${pluginName}.css`
+      const cssFilename = `${args.path}.${pluginName}.css`.replace(pathBase || '', '')
       cssFileContentsMap.set(cssFilename, styleSheet.combine().sort().build(true))
       contents = `import '${cssFilename}'\n${contents}`
     }
