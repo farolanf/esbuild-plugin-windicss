@@ -22,6 +22,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 const parser_1 = require("@babel/parser");
+const crypto_1 = __importDefault(require("crypto"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const windicss_1 = __importDefault(require("windicss"));
@@ -41,7 +42,7 @@ const plugin = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
     };
     let windiCss = new windicss_1.default(windiCssConfig);
     let firstFilePath;
-    const cssFileContentsMap = new Map();
+    const styleSheet = new style_1.StyleSheet();
     const transform = ({ args, contents }, build) => {
         // recreate WindiCss instance for each build
         if (firstFilePath === undefined) {
@@ -50,7 +51,6 @@ const plugin = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
         else if (firstFilePath === args.path) {
             windiCss = new windicss_1.default(windiCssConfig);
         }
-        const styleSheet = new style_1.StyleSheet();
         for (const token of parser_1.parse(contents, resolvedBabelParserOptions).tokens) {
             if (token.value && (token.type.label === 'string' || token.type.label === 'template')) {
                 const interpreted = windiCss.interpret(token.value.replace(ignoredClassPattern, ' ').trim(), true);
@@ -58,11 +58,6 @@ const plugin = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
                     styleSheet.extend(interpreted.styleSheet);
                 }
             }
-        }
-        if (styleSheet.children.length !== 0) {
-            const cssFilename = `${args.path}.${pluginName}.css`;
-            cssFileContentsMap.set(cssFilename, styleSheet.combine().sort().build(true));
-            contents = `import '${cssFilename}'\n${contents}`;
         }
         const ext = path.extname(args.path);
         const loader = build.initialOptions.loader?.[ext] || ext.slice(1);
@@ -82,10 +77,20 @@ const plugin = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
                     return { errors: [{ text: error.message }] };
                 }
             });
-            build.onResolve({ filter: RegExp(String.raw `\.${pluginName}\.css`) }, ({ path }) => ({ path, namespace: pluginName }));
-            build.onLoad({ filter: RegExp(String.raw `\.${pluginName}\.css`), namespace: pluginName }, ({ path }) => {
-                const contents = cssFileContentsMap.get(path);
-                return contents ? { contents, loader: 'css' } : undefined;
+            build.onEnd(async (result) => {
+                if (!result.metafile)
+                    return;
+                const contents = styleSheet.combine().sort().build(true);
+                const hash = crypto_1.default.createHash('md5').update(contents).digest('hex').slice(0, 8);
+                const fileName = `${build.initialOptions.outdir}/css/windi-${hash.toUpperCase()}.css`;
+                await fs.promises.mkdir(`${build.initialOptions.outdir}/css`, { recursive: true }).catch();
+                await fs.promises.writeFile(fileName, contents);
+                result.metafile.outputs[fileName] = {
+                    imports: [],
+                    exports: [],
+                    inputs: {},
+                    bytes: 0,
+                };
             });
         }),
     };

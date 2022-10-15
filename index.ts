@@ -1,5 +1,6 @@
 import { parse, ParserOptions } from '@babel/parser'
 import type { OnLoadArgs, OnLoadResult, Plugin, PluginBuild, Loader } from 'esbuild'
+import crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import WindiCss from 'windicss'
@@ -17,7 +18,6 @@ interface EsbuildPipeablePlugin extends Plugin {
 
 interface EsbuildPluginWindiCssOptions {
   readonly filter?: RegExp
-  readonly pathBase?: string
   readonly babelParserOptions?: ParserOptions
   readonly windiCssConfig?: ConstructorParameters<typeof WindiCss>[0]
 }
@@ -31,7 +31,7 @@ const pluginName = 'esbuild-plugin-windicss'
 
 const ignoredClassPattern = RegExp(`\\b(${Object.getOwnPropertyNames(Object.prototype).join('|')})\\b`, 'g')
 
-const plugin: EsbuildPluginWindiCss = ({ filter, pathBase, babelParserOptions, windiCssConfig } = {}) => {
+const plugin: EsbuildPluginWindiCss = ({ filter, babelParserOptions, windiCssConfig } = {}) => {
   const resolvedBabelParserOptions: ParserOptions = babelParserOptions ? { ...babelParserOptions, tokens: true } : {
     errorRecovery: true,
     allowAwaitOutsideFunction: true,
@@ -44,7 +44,7 @@ const plugin: EsbuildPluginWindiCss = ({ filter, pathBase, babelParserOptions, w
   }
   let windiCss = new WindiCss(windiCssConfig)
   let firstFilePath: string | undefined
-  const cssFileContentsMap = new Map<string, string>()
+  const styleSheet = new StyleSheet()
   const transform = ({ args, contents }: EsbuildPipeableTransformArgs, build: PluginBuild): OnLoadResult => {
     // recreate WindiCss instance for each build
     if (firstFilePath === undefined) {
@@ -52,8 +52,6 @@ const plugin: EsbuildPluginWindiCss = ({ filter, pathBase, babelParserOptions, w
     } else if (firstFilePath === args.path) {
       windiCss = new WindiCss(windiCssConfig)
     }
-
-    const styleSheet = new StyleSheet()
     for (const token of parse(contents, resolvedBabelParserOptions).tokens!) {
       if (token.value && (token.type.label === 'string' || token.type.label === 'template')) {
         const interpreted = windiCss.interpret(token.value.replace(ignoredClassPattern, ' ').trim(), true)
@@ -61,11 +59,6 @@ const plugin: EsbuildPluginWindiCss = ({ filter, pathBase, babelParserOptions, w
           styleSheet.extend(interpreted.styleSheet)
         }
       }
-    }
-    if (styleSheet.children.length !== 0) {
-      const cssFilename = `${args.path}.${pluginName}.css`.replace(pathBase || '', '')
-      cssFileContentsMap.set(cssFilename, styleSheet.combine().sort().build(true))
-      contents = `import '${cssFilename}'\n${contents}`
     }
     const ext = path.extname(args.path)
     const loader = build.initialOptions.loader?.[ext] || ext.slice(1)
@@ -84,10 +77,19 @@ const plugin: EsbuildPluginWindiCss = ({ filter, pathBase, babelParserOptions, w
           return { errors: [{ text: (error as Error).message }] }
         }
       })
-      build.onResolve({ filter: RegExp(String.raw`\.${pluginName}\.css`) }, ({ path }) => ({ path, namespace: pluginName }))
-      build.onLoad({ filter: RegExp(String.raw`\.${pluginName}\.css`), namespace: pluginName }, ({ path }) => {
-        const contents = cssFileContentsMap.get(path)
-        return contents ? { contents, loader: 'css' } : undefined
+      build.onEnd(async result => {
+        if (!result.metafile) return
+        const contents = styleSheet.combine().sort().build(true)
+        const hash = crypto.createHash('md5').update(contents).digest('hex').slice(0, 8)
+        const fileName = `${build.initialOptions.outdir}/css/windi-${hash.toUpperCase()}.css`
+        await fs.promises.mkdir(`${build.initialOptions.outdir}/css`, { recursive: true }).catch()
+        await fs.promises.writeFile(fileName, contents)
+        result.metafile!.outputs[fileName] = {
+          imports: [],
+          exports: [],
+          inputs: {},
+          bytes: 0,
+        }
       })
     }) as EsbuildPipeablePlugin['setup'],
   }
